@@ -3,77 +3,97 @@ import pandas as pd
 import numpy as np
 import io
 
-# --- CORE LOGIC FUNCTION ---
-def process_data(df_raw):
-    # Clean headers
-    df_raw.columns = [str(c).strip().replace('\n', ' ') for c in df_raw.columns]
+st.set_page_config(page_title="Universal Data Merger", layout="wide")
+
+def find_header_row(file_bytes):
+    """Automatically finds which row contains 'Sl No.' or 'Time'"""
+    # Read just the first 20 rows to locate the header
+    df_preview = pd.read_excel(file_bytes, header=None, nrows=20)
+    for i, row in df_preview.iterrows():
+        row_values = [str(val).lower() for val in row.values]
+        if any("sl no." in val or "time" in val for val in row_values):
+            return i
+    return 0  # Default to row 0 if keywords aren't found
+
+def process_pollution_report(df_raw):
+    # 1. Clean column names
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
     
-    # Smart Merge (_L and _U)
-    l_cols = [c for c in df_raw.columns if c.endswith('_L')]
-    merged_data = df_raw.iloc[:, :2].copy()
-    meta_cols = merged_data.columns.tolist()
-    sn_col = meta_cols[0]
-
-    for l_col in l_cols:
-        base_name = l_col[:-2]
-        u_col = base_name + '_U'
-        if u_col in df_raw.columns:
-            merged_data[base_name] = df_raw[l_col].combine_first(df_raw[u_col])
-        else:
-            merged_data[base_name] = df_raw[l_col]
-
-    # Gap Filling
-    merged_data[sn_col] = pd.to_numeric(merged_data[sn_col], errors='coerce')
-    params = [c for c in merged_data.columns if c not in meta_cols]
-
-    for col in params:
-        # Fill specific gap 634-769 based on 500-633
-        gap_indices = merged_data[(merged_data[sn_col] >= 634) & (merged_data[sn_col] <= 769)].index
-        ref_v = pd.to_numeric(merged_data[(merged_data[sn_col] >= 500) & (merged_data[sn_col] < 634)][col], errors='coerce').dropna().values
+    # 2. Identify Metadata
+    sn_col = df_raw.columns[0]
+    time_col = df_raw.columns[1]
+    
+    result_df = df_raw[[sn_col, time_col]].copy()
+    
+    # 3. Find parameter bases (columns ending in _U)
+    u_cols = [c for c in df_raw.columns if c.endswith('_U')]
+    
+    for u_col in u_cols:
+        base_name = u_col[:-2]
+        l_col = base_name + '_L'
         
-        if len(ref_v) > 0:
-            samples = np.random.choice(ref_v, size=len(gap_indices))
-            merged_data.loc[gap_indices, col] = np.round(samples * np.random.uniform(0.98, 1.02, size=len(gap_indices)), 2)
+        # Merge Logic
+        if l_col in df_raw.columns:
+            merged = df_raw[u_col].fillna(df_raw[l_col])
+        else:
+            merged = df_raw[u_col]
+        
+        # 4. Universal Gap Filling (Ignoring 'Site Shutdown')
+        numeric_series = pd.to_numeric(merged, errors='coerce')
+        is_shutdown = merged.astype(str).str.contains("Site Shutdown", case=False, na=False)
+        is_missing = numeric_series.isna() & ~is_shutdown
+        
+        if is_missing.any():
+            for idx in result_df[is_missing].index:
+                # Look at previous 50 rows for valid numbers to sample from
+                window = numeric_series.iloc[max(0, idx-50):idx].dropna()
+                
+                if not window.empty:
+                    val = np.random.choice(window.values)
+                    merged.iloc[idx] = np.round(val * np.random.uniform(0.98, 1.02), 2)
+                else:
+                    # Look forward if backward window is empty
+                    window_future = numeric_series.iloc[idx+1:idx+51].dropna()
+                    if not window_future.empty:
+                        val = np.random.choice(window_future.values)
+                        merged.iloc[idx] = np.round(val * np.random.uniform(0.98, 1.02), 2)
 
-        # Fill remaining stray NaNs
-        for idx in merged_data[merged_data[col].isnull()].index:
-            sn_val = merged_data.loc[idx, sn_col]
-            window = merged_data[(merged_data[sn_col] < sn_val) & (merged_data[sn_col] >= sn_val - 50)][col].dropna().values
-            if len(window) > 0:
-                merged_data.loc[idx, col] = np.round(np.random.choice(window) * np.random.uniform(0.98, 1.02), 2)
-    
-    return merged_data
+        result_df[base_name] = merged
+        
+    return result_df
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="Pollution Report Cleaner", layout="centered")
-st.title("📊 Pollution Report Merger & Filler")
-st.write("Upload your raw Excel file to merge L/U columns and fill missing data.")
+st.title("📊 Smart Pollution Data Merger")
+st.markdown("This tool automatically detects headers, merges `_U/_L` columns, and fills gaps while preserving **'Site Shutdown'** labels.")
 
-uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
+file = st.sidebar.file_uploader("Upload Excel File", type="xlsx")
 
-if uploaded_file:
-    # Preview the data
-    df = pd.read_excel(uploaded_file, header=1)
-    st.success("File uploaded successfully!")
-    st.subheader("Raw Data Preview (First 5 rows)")
-    st.write(df.head())
-
-    if st.button("✨ Process and Fill Data"):
-        with st.spinner('Merging and simulating data...'):
-            final_df = process_data(df)
+if file:
+    # --- AUTOMATIC HEADER DETECTION ---
+    header_index = find_header_row(file)
+    # Reset file pointer to read again from the start
+    file.seek(0) 
+    
+    # Read the data using the detected header index
+    df = pd.read_excel(file, header=header_index)
+    
+    st.write(f"✅ Auto-detected headers at row {header_index + 1}")
+    
+    if st.button("🚀 Process Entire Sheet"):
+        with st.spinner("Analyzing structure and filling gaps..."):
+            final_df = process_pollution_report(df)
             
-            # Convert dataframe to Excel in memory
+            st.success("Processing complete!")
+            st.dataframe(final_df)
+            
+            # Excel Download
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 final_df.to_excel(writer, index=False)
             
-            st.balloons()
-            st.subheader("✅ Processing Complete!")
-            
-            # Download button
             st.download_button(
-                label="📥 Download Cleaned Excel File",
+                label="📥 Download Processed Excel",
                 data=output.getvalue(),
-                file_name="Cleaned_Pollution_Report.xlsx",
+                file_name="Universal_Processed_Report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
