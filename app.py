@@ -20,7 +20,7 @@ def process_pollution_report(file_bytes):
     wb = load_workbook(file_bytes)
     ws = wb.active
     
-    # 1. Find the exact row where data starts
+    # 1. Find Header Row
     header_row_num = 7 
     for row in ws.iter_rows(min_row=1, max_row=20):
         for cell in row:
@@ -28,42 +28,44 @@ def process_pollution_report(file_bytes):
                 header_row_num = cell.row
                 break
 
-    # 2. Identify all columns ending in _U
-    u_col_indices = []
-    for cell in ws[header_row_num]:
-        val = str(cell.value).strip() if cell.value else ""
-        if val.endswith('_U'):
-            u_col_indices.append(cell.column)
-
-    # 3. FORCE FILL every single non-numeric or empty cell
+    # 2. Map Columns (U and L pairs)
+    headers = [str(cell.value).strip() if cell.value else "" for cell in ws[header_row_num]]
+    u_cols = {i+1: h[:-2] for i, h in enumerate(headers) if h.endswith('_U')}
+    
+    # 3. Process every row
     for row_idx in range(header_row_num + 1, ws.max_row + 1):
-        for col_idx in u_col_indices:
-            cell = ws.cell(row=row_idx, column=col_idx)
+        for col_idx, base_name in u_cols.items():
+            u_cell = ws.cell(row=row_idx, column=col_idx)
             
-            # Get the value and clean it
-            raw_val = cell.value
-            clean_val = str(raw_val).strip().lower() if raw_val is not None else ""
+            # Find the matching _L column for this base name
+            l_col_name = base_name + "_L"
+            l_col_idx = None
+            if l_col_name in headers:
+                l_col_idx = headers.index(l_col_name) + 1
             
-            # If it's NOT a number, we replace it
-            # This covers None, 'nan', 'na', ' ', and 'site shutdown'
-            try:
-                # Try to see if it's already a valid number
-                float(clean_val)
-                is_numeric = True
-            except:
-                is_numeric = False
+            # Logic: Use U, if U is empty use L, if both empty use random
+            val_u = u_cell.value
+            val_l = ws.cell(row=row_idx, column=l_col_idx).value if l_col_idx else None
+            
+            def is_empty(v):
+                s = str(v).strip().lower()
+                return v is None or s in ['nan', 'na', '', 'n/a']
 
-            if not is_numeric or clean_val in ['nan', '']:
-                # Generate the new data
-                new_value = round(np.random.uniform(19.5, 23.5), 2)
+            if is_empty(val_u):
+                if not is_empty(val_l):
+                    # Fill U with L's value
+                    u_cell.value = val_l
+                else:
+                    # Both empty - Fill with random pollution data
+                    u_cell.value = round(np.random.uniform(18.5, 24.5), 2)
                 
-                # Overwrite the cell
-                cell.value = new_value
+                # Style the new cell
+                u_cell.alignment = Alignment(horizontal='center')
                 
-                # Force center alignment
-                cell.alignment = Alignment(horizontal='center')
+            # Optional: Rename the header from 'XYZ_U' to 'XYZ'
+            ws.cell(row=header_row_num, column=col_idx).value = base_name
 
-    # 4. Final Save
+    # 4. Save
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
