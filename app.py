@@ -5,87 +5,99 @@ import io
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 
+# --- BRANDED PAGE CONFIG ---
 st.set_page_config(page_title="Sai Goud Report Processor", layout="wide")
 
-def find_header_row(file_bytes):
-    df_preview = pd.read_excel(file_bytes, header=None, nrows=20)
-    for i, row in df_preview.iterrows():
-        row_values = [str(val).lower() for val in row.values]
-        if any("sl no." in val or "time" in val for val in row_values):
-            return i
-    return 0
-
 def process_pollution_report(file_bytes):
+    # 1. LOAD WORKBOOK FOR FORMATTING PRESERVATION
     file_bytes.seek(0)
     wb = load_workbook(file_bytes)
     ws = wb.active
     
-    # 1. Find Header Row
-    header_row_num = 7 
-    for row in ws.iter_rows(min_row=1, max_row=20):
-        for cell in row:
-            if cell.value and "sl no." in str(cell.value).lower():
-                header_row_num = cell.row
-                break
-
-    # 2. Map Columns (U and L pairs)
-    headers = [str(cell.value).strip() if cell.value else "" for cell in ws[header_row_num]]
-    u_cols = {i+1: h[:-2] for i, h in enumerate(headers) if h.endswith('_U')}
+    # 2. USE PANDAS FOR DATA LOGIC
+    file_bytes.seek(0)
+    df_preview = pd.read_excel(file_bytes, header=None, nrows=20)
+    header_idx = 0
+    for i, row in df_preview.iterrows():
+        if any("sl no." in str(val).lower() for val in row.values):
+            header_idx = i
+            break
+            
+    file_bytes.seek(0)
+    df_raw = pd.read_excel(file_bytes, header=header_idx)
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
     
-    # 3. Process every row
-    for row_idx in range(header_row_num + 1, ws.max_row + 1):
-        for col_idx, base_name in u_cols.items():
-            u_cell = ws.cell(row=row_idx, column=col_idx)
-            
-            # Find the matching _L column for this base name
-            l_col_name = base_name + "_L"
-            l_col_idx = None
-            if l_col_name in headers:
-                l_col_idx = headers.index(l_col_name) + 1
-            
-            # Logic: Use U, if U is empty use L, if both empty use random
-            val_u = u_cell.value
-            val_l = ws.cell(row=row_idx, column=l_col_idx).value if l_col_idx else None
-            
-            def is_empty(v):
-                s = str(v).strip().lower()
-                return v is None or s in ['nan', 'na', '', 'n/a']
+    u_cols = [c for c in df_raw.columns if c.endswith('_U')]
 
-            if is_empty(val_u):
-                if not is_empty(val_l):
-                    # Fill U with L's value
-                    u_cell.value = val_l
+    # 3. APPLY LOGIC & WRITE TO CELLS
+    for u_col in u_cols:
+        base_name = u_col[:-2]
+        l_col = base_name + '_L'
+        
+        u_col_idx = df_raw.columns.get_loc(u_col) + 1
+        l_col_idx = df_raw.columns.get_loc(l_col) + 1 if l_col in df_raw.columns else None
+        
+        if l_col_idx:
+            merged = df_raw[u_col].fillna(df_raw[l_col])
+        else:
+            merged = df_raw[u_col]
+            
+        numeric_series = pd.to_numeric(merged, errors='coerce')
+        is_shutdown = merged.astype(str).str.contains("Site Shutdown", case=False, na=False)
+        is_missing = numeric_series.isna() & ~is_shutdown
+        
+        global_mean = numeric_series.dropna().mean()
+        if np.isnan(global_mean): global_mean = 20.0
+
+        for idx in range(len(df_raw)):
+            excel_row = idx + header_idx + 2
+            
+            if is_missing.iloc[idx]:
+                window = numeric_series.iloc[max(0, idx-50):idx].dropna()
+                if window.empty:
+                    window = numeric_series.iloc[idx+1:idx+51].dropna()
+                
+                if not window.empty:
+                    val = np.random.choice(window.values)
+                    new_val = np.round(val * np.random.uniform(0.98, 1.02), 2)
                 else:
-                    # Both empty - Fill with random pollution data
-                    u_cell.value = round(np.random.uniform(18.5, 24.5), 2)
+                    new_val = np.round(global_mean * np.random.uniform(0.95, 1.05), 2)
                 
-                # Style the new cell
-                u_cell.alignment = Alignment(horizontal='center')
-                
-            # Optional: Rename the header from 'XYZ_U' to 'XYZ'
-            ws.cell(row=header_row_num, column=col_idx).value = base_name
+                target_cell = ws.cell(row=excel_row, column=u_col_idx)
+                target_cell.value = new_val
+                target_cell.alignment = Alignment(horizontal='center', vertical='center')
 
-    # 4. Save
+        # 4. MERGE HEADERS
+        if l_col_idx:
+            ws.merge_cells(start_row=header_idx + 1, start_column=u_col_idx, 
+                           end_row=header_idx + 1, end_column=l_col_idx)
+            header_cell = ws.cell(row=header_idx + 1, column=u_col_idx)
+            header_cell.value = base_name
+            header_cell.alignment = Alignment(horizontal='center', vertical='center')
+
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
-# --- STREAMLIT UI (With your custom wording) ---
-st.title("Sai Goud Report Processor")
-st.info("Welcome to my page! Upload your pollution report in Excel format")
 
+# --- SAI GOUD BRANDED UI ---
+st.title("🛡️ Sai Goud Report Processor")
+st.info("Welcome to my page! Upload your pollution report in Excel format and I will handle the rest.")
+
+# Sidebar Branding
+st.sidebar.markdown("### User Controls")
 file = st.sidebar.file_uploader("Upload Pollution Excel", type="xlsx")
+st.sidebar.info("Developed by Sai Goud")
 
 if file:
-    if st.button("press for Formatting"):
-        with st.spinner("Processing report..."):
-            # This now returns the full formatted Excel bytes
-            processed_file_bytes = process_pollution_report(file)
+    if st.button("Press for Formatting"):
+        with st.spinner("Processing report with Sai Goud's Logic..."):
+            processed_file = process_pollution_report(file)
             
-            st.success("Processing complete! Thank you for Using Sai Goud's Website, Please Download the Processed Report Below and Come Back for More!")
+            st.success("Processing complete! Thank you for using Sai Goud's Website. Please download your processed report below and come back for more!")
             
             st.download_button(
-                label="Download Report",
-                data=processed_file_bytes,
+                label="Download Processed Report",
+                data=processed_file,
                 file_name="Universal_Processed_Report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
