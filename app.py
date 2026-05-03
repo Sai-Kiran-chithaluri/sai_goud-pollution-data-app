@@ -17,68 +17,45 @@ def find_header_row(file_bytes):
 
 def process_pollution_report(file_bytes):
     file_bytes.seek(0)
-    # 1. Load the workbook
     wb = load_workbook(file_bytes)
     ws = wb.active
     
-    # 2. Find the header row accurately
-    header_row_num = 1
+    # 1. Find the Header Row (usually Row 7)
+    header_row_num = 7 # Default fallback
     for row in ws.iter_rows(min_row=1, max_row=20):
         for cell in row:
             if cell.value and "sl no." in str(cell.value).lower():
                 header_row_num = cell.row
                 break
-        else: continue
-        break
 
-    # 3. Read data for processing logic
-    file_bytes.seek(0)
-    df_raw = pd.read_excel(file_bytes, header=header_row_num - 1)
-    df_raw.columns = [str(c).strip() for c in df_raw.columns]
-    
-    u_cols = [c for c in df_raw.columns if c.endswith('_U')]
-    
-    for u_col in u_cols:
-        # Find which column index this is in Excel (1-based)
-        col_idx_in_excel = df_raw.columns.get_loc(u_col) + 1
-        
-        base_name = u_col[:-2]
-        l_col = base_name + '_L'
-        
-        # Merge U and L
-        if l_col in df_raw.columns:
-            merged = df_raw[u_col].fillna(df_raw[l_col])
-        else:
-            merged = df_raw[u_col]
-        
-        # Process Gaps
-        numeric_series = pd.to_numeric(merged, errors='coerce')
-        is_missing = numeric_series.isna()
-        
-        if is_missing.any():
-            global_mean = numeric_series.dropna().mean() or 20.0
+    # 2. Identify the Data Columns (anything ending in _U)
+    u_col_indices = []
+    for cell in ws[header_row_num]:
+        val = str(cell.value).strip() if cell.value else ""
+        if val.endswith('_U'):
+            u_col_indices.append(cell.column)
+
+    # 3. Force Fill Gaps
+    # We iterate through every row after the header
+    for row_idx in range(header_row_num + 1, ws.max_row + 1):
+        for col_idx in u_col_indices:
+            cell = ws.cell(row=row_idx, column=col_idx)
             
-            # 4. WRITE TO EXCEL
-            for idx, value in enumerate(merged):
-                # Calculate absolute excel row: 
-                # Header is 'header_row_num', first data is 'header_row_num + 1'
-                excel_row = header_row_num + idx + 1
+            # Check if the cell is TRULY empty or contains 'NaN' text
+            cell_val_str = str(cell.value).strip().lower() if cell.value is not None else ""
+            
+            if cell.value is None or cell_val_str in ['nan', 'na', '', 'n/a']:
+                # Generate a realistic number (e.g., between 18 and 24)
+                # Or you can use a fixed number for testing first
+                new_value = round(np.random.uniform(19.5, 22.5), 2)
                 
-                target_cell = ws.cell(row=excel_row, column=col_idx_in_excel)
+                # WRITE THE VALUE
+                cell.value = new_value
                 
-                # If it was NA or empty, fill it!
-                if target_cell.value is None or str(target_cell.value).strip().lower() in ['nan', 'na', '']:
-                    # Use the filled value logic
-                    val = numeric_series.iloc[idx]
-                    if pd.isna(val):
-                        # Simple fill for testing - you can use your random logic here
-                        val = round(global_mean * np.random.uniform(0.98, 1.02), 2)
-                    
-                    target_cell.value = val
-                
-                # Keep it centered
-                target_cell.alignment = Alignment(horizontal='center')
+                # FIX ALIGNMENT (Center)
+                cell.alignment = Alignment(horizontal='center')
 
+    # 4. Save and return
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
