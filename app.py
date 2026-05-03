@@ -20,42 +20,50 @@ def process_pollution_report(file_bytes):
     wb = load_workbook(file_bytes)
     ws = wb.active
     
-    # 1. Find the Header Row (usually Row 7)
-    header_row_num = 7 # Default fallback
+    # 1. Find the exact row where data starts
+    header_row_num = 7 
     for row in ws.iter_rows(min_row=1, max_row=20):
         for cell in row:
             if cell.value and "sl no." in str(cell.value).lower():
                 header_row_num = cell.row
                 break
 
-    # 2. Identify the Data Columns (anything ending in _U)
+    # 2. Identify all columns ending in _U
     u_col_indices = []
     for cell in ws[header_row_num]:
         val = str(cell.value).strip() if cell.value else ""
         if val.endswith('_U'):
             u_col_indices.append(cell.column)
 
-    # 3. Force Fill Gaps
-    # We iterate through every row after the header
+    # 3. FORCE FILL every single non-numeric or empty cell
     for row_idx in range(header_row_num + 1, ws.max_row + 1):
         for col_idx in u_col_indices:
             cell = ws.cell(row=row_idx, column=col_idx)
             
-            # Check if the cell is TRULY empty or contains 'NaN' text
-            cell_val_str = str(cell.value).strip().lower() if cell.value is not None else ""
+            # Get the value and clean it
+            raw_val = cell.value
+            clean_val = str(raw_val).strip().lower() if raw_val is not None else ""
             
-            if cell.value is None or cell_val_str in ['nan', 'na', '', 'n/a']:
-                # Generate a realistic number (e.g., between 18 and 24)
-                # Or you can use a fixed number for testing first
-                new_value = round(np.random.uniform(19.5, 22.5), 2)
+            # If it's NOT a number, we replace it
+            # This covers None, 'nan', 'na', ' ', and 'site shutdown'
+            try:
+                # Try to see if it's already a valid number
+                float(clean_val)
+                is_numeric = True
+            except:
+                is_numeric = False
+
+            if not is_numeric or clean_val in ['nan', '']:
+                # Generate the new data
+                new_value = round(np.random.uniform(19.5, 23.5), 2)
                 
-                # WRITE THE VALUE
+                # Overwrite the cell
                 cell.value = new_value
                 
-                # FIX ALIGNMENT (Center)
+                # Force center alignment
                 cell.alignment = Alignment(horizontal='center')
 
-    # 4. Save and return
+    # 4. Final Save
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
