@@ -74,13 +74,13 @@ def process_pollution_report(file_bytes):
     return meta_rows, result_df
 
 # --- STREAMLIT UI ---
-st.title("📊 Diamond Cements Report Processor")
-st.info("Strict Mode: Only empty cells are filled. Zeros and 'Site Shutdown' remain unchanged.")
+st.title("Sai Goud Report Processor")
+st.info("Welcome to my page! Upload your pollution report in Excel format")
 
 file = st.sidebar.file_uploader("Upload Pollution Excel", type="xlsx")
 
 if file:
-    if st.button("🚀 Process & Keep Formatting"):
+    if st.button("press for Formatting"):
         with st.spinner("Processing report..."):
             meta, processed_data = process_pollution_report(file)
             
@@ -92,11 +92,11 @@ if file:
                 # Write data table below headers
                 processed_data.to_excel(writer, index=False, startrow=len(meta))
             
-            st.success("Processing complete!")
+            st.success("Processing complete! Thank you for Using Sai Goud's Website, Please Download the Processed Report Below and Come Back for More!")
             st.dataframe(processed_data.head(10))
             
             st.download_button(
-                label="📥 Download Formatted Report",
+                label="Download Report",
                 data=output.getvalue(),
                 file_name="Universal_Processed_Report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
