@@ -69,7 +69,6 @@ def process_pollution_report(file_bytes):
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
-
 # --- STREAMLIT UI (With your custom wording) ---
 st.title("Sai Goud Report Processor")
 st.info("Welcome to my page! Upload your pollution report in Excel format")
